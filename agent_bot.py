@@ -170,11 +170,12 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
     body = "\n\n".join(normalized_paragraphs)
 
     # --- Optionally convert plain-text body to styled HTML ---
+    html_body = None
     if use_html:
         html_paragraphs = "".join(
             f"<p>{para}</p>" for para in normalized_paragraphs
         )
-    html_body = f"""<!DOCTYPE html>
+        html_body = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
