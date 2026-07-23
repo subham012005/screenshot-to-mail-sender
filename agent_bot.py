@@ -162,7 +162,7 @@ class SendEmailInput(BaseModel):
 
 @tool("send_email", args_schema=SendEmailInput)
 def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None, attachment_paths: Optional[List[str]] = None, use_html: bool = True) -> str:
-    """Sends an email using Gmail API (OAuth2) with optional attachments, CC, and BCC. use_html controls whether to send styled HTML or plain text.""
+    """Sends an email using Gmail API (OAuth2) with optional attachments, CC, and BCC. use_html controls whether to send styled HTML or plain text."""
     SENDER_EMAIL = os.getenv("SENDER_EMAIL")
     if not SENDER_EMAIL:
         return "Error: SENDER_EMAIL environment variable must be set."
