@@ -161,10 +161,18 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
     except Exception as e:
         return f"Error loading Gmail credentials: {str(e)}"
 
+    # --- Normalize body: collapse hard mid-sentence line breaks into spaces ---
+    # The AI wraps lines at ~70 chars using \n. Plain-text email clients render
+    # those as actual line breaks, causing the narrow/cluttered look.
+    # We rejoin lines within the same paragraph into one long line.
+    paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
+    normalized_paragraphs = [" ".join(line.strip() for line in p.splitlines() if line.strip()) for p in paragraphs]
+    body = "\n\n".join(normalized_paragraphs)
+
     # --- Optionally convert plain-text body to styled HTML ---
     if use_html:
         html_paragraphs = "".join(
-            f"<p>{line}</p>" for line in body.split("\n") if line.strip()
+            f"<p>{para}</p>" for para in normalized_paragraphs
         )
     html_body = f"""<!DOCTYPE html>
 <html lang="en">
