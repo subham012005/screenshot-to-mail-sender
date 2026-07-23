@@ -111,7 +111,46 @@ try:
 except Exception:
     pass
 
+# ================== HTML EMAIL TEMPLATE ==================
+# Defined at module level (column 0) to avoid f-string indentation SyntaxErrors.
+# {{BODY}} is replaced at send time via str.replace().
+HTML_EMAIL_TEMPLATE = (
+    "<!DOCTYPE html>"
+    "<html lang='en'>"
+    "<head>"
+    "<meta charset='UTF-8'>"
+    "<meta name='viewport' content='width=device-width, initial-scale=1.0'>"
+    "</head>"
+    "<body style='margin:0;padding:0;background-color:#f4f6f8;"
+    "font-family:Arial,sans-serif;'>"
+    "<table width='100%' cellpadding='0' cellspacing='0' "
+    "style='background-color:#f4f6f8;padding:30px 0;'>"
+    "<tr><td align='center'>"
+    "<table width='620' cellpadding='0' cellspacing='0' "
+    "style='background:#ffffff;border-radius:10px;overflow:hidden;"
+    "box-shadow:0 2px 12px rgba(0,0,0,0.08);'>"
+    "<tr><td style='background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);"
+    "padding:28px 36px;'>"
+    "<p style='margin:0;color:#ffffff;font-size:18px;font-weight:700;"
+    "letter-spacing:0.5px;'>Professional Application</p>"
+    "<p style='margin:4px 0 0;color:#a0b4cc;font-size:13px;'>"
+    "Sent via Subham's AI Mail Assistant</p>"
+    "</td></tr>"
+    "<tr><td style='padding:36px 36px 24px;'>"
+    "<div style='color:#1e293b;font-size:15px;line-height:1.8;'>{{BODY}}</div>"
+    "</td></tr>"
+    "<tr><td style='padding:0 36px;'>"
+    "<hr style='border:none;border-top:1px solid #e2e8f0;margin:0;'>"
+    "</td></tr>"
+    "<tr><td style='padding:20px 36px 28px;'>"
+    "<p style='margin:0;color:#94a3b8;font-size:12px;'>"
+    "This email was composed and sent by an AI assistant on behalf of the sender."
+    "</p></td></tr>"
+    "</table></td></tr></table></body></html>"
+)
+
 # ================== EMAIL & AI TOOLS ==================
+
 class SendEmailInput(BaseModel):
     to: str = Field(description="The email address of the primary recipient")
     subject: str = Field(description="The subject of the email")
@@ -175,59 +214,7 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
         html_paragraphs = "".join(
             f"<p>{para}</p>" for para in normalized_paragraphs
         )
-        html_body = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
-<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:'Segoe UI',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:30px 0;">
-    <tr>
-      <td align="center">
-        <table width="620" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
-
-          <!-- Header bar -->
-          <tr>
-            <td style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);padding:28px 36px;">
-              <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:0.5px;">
-                Professional Application
-              </p>
-              <p style="margin:4px 0 0;color:#a0b4cc;font-size:13px;">Sent via Subham's AI Mail Assistant</p>
-            </td>
-          </tr>
-
-          <!-- Body -->
-          <tr>
-            <td style="padding:36px 36px 24px;">
-              <div style="color:#1e293b;font-size:15px;line-height:1.8;">
-                {html_paragraphs}
-              </div>
-            </td>
-          </tr>
-
-          <!-- Divider -->
-          <tr>
-            <td style="padding:0 36px;">
-              <hr style="border:none;border-top:1px solid #e2e8f0;margin:0;">
-            </td>
-          </tr>
-
-          <!-- Footer -->
-          <tr>
-            <td style="padding:20px 36px 28px;">
-              <p style="margin:0;color:#94a3b8;font-size:12px;">
-                This email was composed and sent by an AI assistant on behalf of the sender.
-              </p>
-            </td>
-          </tr>
-
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>"""
+        html_body = HTML_EMAIL_TEMPLATE.replace("{{BODY}}", html_paragraphs)
 
     # --- Build the MIME message ---
     def _build_attachment_parts(outer_msg):
