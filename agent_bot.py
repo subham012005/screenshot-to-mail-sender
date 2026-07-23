@@ -160,10 +160,73 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
     except Exception as e:
         return f"Error loading Gmail credentials: {str(e)}"
 
+    # --- Convert plain-text body to clean HTML ---
+    html_paragraphs = "".join(
+        f"<p>{line}</p>" for line in body.split("\n") if line.strip()
+    )
+    html_body = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f8;padding:30px 0;">
+    <tr>
+      <td align="center">
+        <table width="620" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+
+          <!-- Header bar -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);padding:28px 36px;">
+              <p style="margin:0;color:#ffffff;font-size:18px;font-weight:700;letter-spacing:0.5px;">
+                Professional Application
+              </p>
+              <p style="margin:4px 0 0;color:#a0b4cc;font-size:13px;">Sent via Subham's AI Mail Assistant</p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:36px 36px 24px;">
+              <div style="color:#1e293b;font-size:15px;line-height:1.8;">
+                {html_paragraphs}
+              </div>
+            </td>
+          </tr>
+
+          <!-- Divider -->
+          <tr>
+            <td style="padding:0 36px;">
+              <hr style="border:none;border-top:1px solid #e2e8f0;margin:0;">
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 36px 28px;">
+              <p style="margin:0;color:#94a3b8;font-size:12px;">
+                This email was composed and sent by an AI assistant on behalf of the sender.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
     # --- Build the MIME message ---
     if attachment_paths:
-        msg = MIMEMultipart()
-        msg.attach(MIMEText(body, "plain"))
+        # multipart/mixed wraps everything (text + attachments)
+        msg = MIMEMultipart("mixed")
+        # inner multipart/alternative for plain + html
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(body, "plain", "utf-8"))
+        alt.attach(MIMEText(html_body, "html", "utf-8"))
+        msg.attach(alt)
         for path in attachment_paths:
             if not os.path.exists(path):
                 return f"Error: Attachment not found at {path}"
@@ -178,12 +241,15 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
             part.add_header("Content-Disposition", "attachment", filename=os.path.basename(path))
             msg.attach(part)
     else:
-        msg = MIMEText(body, "plain")
+        # No attachments — multipart/alternative (plain + html)
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     msg["Subject"] = subject
-    msg["From"] = SENDER_EMAIL
-    msg["To"] = to
-    if cc:  msg["Cc"] = cc
+    msg["From"]    = SENDER_EMAIL
+    msg["To"]      = to
+    if cc:  msg["Cc"]  = cc
     if bcc: msg["Bcc"] = bcc
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
@@ -196,6 +262,7 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
         return f"Email successfully sent to {to} via Gmail API."
     except Exception as e:
         return f"Failed to send email via Gmail API: {str(e)}"
+
 
 class DraftEmailFromImagesInput(BaseModel):
     image_paths: List[str] = Field(description="List of local file paths to the images to analyze.")
