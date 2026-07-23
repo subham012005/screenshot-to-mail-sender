@@ -1,0 +1,58 @@
+Subham Sharma
++917988944185 | subham1401sh@gmail.com | linkedin.com/in/subham1401
+
+Professional Summary
+AI Engineer specializing in Generative AI, Multi-Agent Systems, Retrieval-Augmented Generation (RAG), and FastAPI backend development. Experienced in building production-ready LLM applications, AI agents, and scalable cloud-native AI systems. Passionate about AI infrastructure, workflow automation, and autonomous agent architectures.
+
+WORK EXPERIENCE
+Lead AI Engineer - Freelance – Aceplace.ai by NovaXQuantum | Remote | Jan 2026 - Jul 2026
+• Developed a deterministic, identity-based multi-agent execution runtime with role-based workflows and workflow orchestration. 
+• Designed the Execution Envelope system with Firestore-backed persistence, crash recovery, concurrency control, and audit logging for reliable execution. 
+• Built a Next.js monitoring workstation with human-in-the-loop approvals for real-time orchestration and execution traceability.
+
+Generative AI Engineer Intern - Digital Nexus AI | Remote | Jan 2026 - Jul 2026
+• Developed Python-based web scraping pipelines and APIs to collect, process, and manage 50,000+ tender records for AI-powered applications.
+• Built RAG pipelines using LangChain, FAISS, Pinecone, embeddings, and LLMs, implementing document indexing and contextual retrieval for accurate semantic search and question answering. 
+• Integrated FastAPI backend services and collaborated on AI workflows, vector database optimization, and LLM powered features for scalable GenAI solutions.
+
+Data Analytics Intern - MacroEdtech | Remote | Aug 2025 - Jan 2026
+• Performed data preprocessing, EDA, and feature engineering on 15 real-world datasets; implemented and evaluated supervised and unsupervised machine learning models using performance metrics for model selection.
+• Developed structured educational content, technical documentation, and curriculum-aligned learning materials to support scalable data science and machine learning workshops.
+• Delivered all assigned projects within deadlines, demonstrating strong analytical thinking, model evaluation skills, and professional execution.
+
+AI Developer - Freelance - NovaXQuantum | Remote | Jul 2025 - Aug 2025
+• Built an Autonomous Mail Reply Agent using SMTP, IMAP, OpenAI GPT, LangChain, and PostgreSQL to automate intelligent email classification and response generation, processing thousands of emails daily. 
+• Reduced manual triage by 80% and improved response speed by 90% through fault-tolerant AI workflows featuring automated prioritization, retries, rate-limit handling, fallback logic, and immutable JSON audit logging with 99.9% traceability.
+
+PROJECTS
+ExpenseTracker MCP Server – Cloud Hosted
+Tech Stack: Python (async), MCP, FastMCP, SQLite, Docker, Render
+• Built a production-ready MCP server enabling secure, concurrent tool execution for multiple AI clients using asynchronous Python.
+• Implemented async, non-blocking APIs to support concurrent multi-client access.
+• Integrated SQLite via FastMCP for persistent, lightweight storage.
+• Deployed as a public remote MCP service, consumable by any compatible AI client.
+
+FastAPI RAG AI Agent – AWS Hosted
+Tech Stack: Python, FastAPI, LangChain, OpenAI GPT, Embeddings, FAISS, REST APIs, Docker, AWS EC2, PDF Loaders, Session Memory
+• Designed and deployed a cloud-native RAG system using FAISS, OpenAI embeddings, and FastAPI, enabling accurate semantic search over policy PDFs with low-latency responses.
+• Architected a modular, scalable AI agent layer with session-based conversational memory, exposed via RESTful APIs with validation and structured error handling, supporting reliable multi-turn interactions.
+• Containerized with Docker and deployed on AWS EC2, delivering a production-ready, scalable inference pipeline with improved system reliability and maintainability.
+
+TECHNICAL SKILLS
+• Languages: C, C++, Python, JavaScript
+• AI & Agent Systems: LangChain, LangGraph, LangSmith, MCP (Server & Client), OpenAI GPT, Gemini, Ollama, Hugging Face, Prompt Engineering, AI Agents
+• Backend & Web: FastAPI, REST APIs, HTML, CSS, JavaScript, Streamlit, Web Scraping
+• Databases & Vector Stores: PostgreSQL, MySQL, SQLite, FAISS, Pinecone, Firebase, Supabase
+• Cloud & DevOps: AWS (EC2), Docker, GitHub Actions (CI/CD), Cloud Deployment
+• ML & Data: NumPy, Pandas, scikit-learn, Matplotlib, Seaborn
+• Developer Tools: GitHub, VS Code, Jupyter, Colab, Android Studio
+• Fundamentals: Data Structures and Algorithms (DSA), Operating Systems, Computer Architecture
+
+EDUCATION
+J.C. Bose University of Science and Technology (YMCA) 
+Bachelor of Technology in Computer Science and Engineering, Expected June 2027 CGPA: 7.77
+
+Additional Details
+Portfolio : https://subham-portfolio-1101.vercel.app
+Github : https://github.com/subham012005
+Fiverr : https://www.fiverr.com/subham0017
