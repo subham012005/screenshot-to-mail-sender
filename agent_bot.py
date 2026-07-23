@@ -119,10 +119,11 @@ class SendEmailInput(BaseModel):
     cc: Optional[str] = Field(None, description="Comma-separated email addresses for CC")
     bcc: Optional[str] = Field(None, description="Comma-separated email addresses for BCC")
     attachment_paths: Optional[List[str]] = Field(None, description="List of file paths for attachments")
+    use_html: bool = Field(True, description="If True, send as a styled HTML email. If False, send as plain text.")
 
 @tool("send_email", args_schema=SendEmailInput)
-def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None, attachment_paths: Optional[List[str]] = None) -> str:
-    """Sends an email using Gmail API (OAuth2) with optional attachments, CC, and BCC."""
+def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None, attachment_paths: Optional[List[str]] = None, use_html: bool = True) -> str:
+    """Sends an email using Gmail API (OAuth2) with optional attachments, CC, and BCC. use_html controls whether to send styled HTML or plain text.""
     SENDER_EMAIL = os.getenv("SENDER_EMAIL")
     if not SENDER_EMAIL:
         return "Error: SENDER_EMAIL environment variable must be set."
@@ -160,10 +161,11 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
     except Exception as e:
         return f"Error loading Gmail credentials: {str(e)}"
 
-    # --- Convert plain-text body to clean HTML ---
-    html_paragraphs = "".join(
-        f"<p>{line}</p>" for line in body.split("\n") if line.strip()
-    )
+    # --- Optionally convert plain-text body to styled HTML ---
+    if use_html:
+        html_paragraphs = "".join(
+            f"<p>{line}</p>" for line in body.split("\n") if line.strip()
+        )
     html_body = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -219,15 +221,8 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
 </html>"""
 
     # --- Build the MIME message ---
-    if attachment_paths:
-        # multipart/mixed wraps everything (text + attachments)
-        msg = MIMEMultipart("mixed")
-        # inner multipart/alternative for plain + html
-        alt = MIMEMultipart("alternative")
-        alt.attach(MIMEText(body, "plain", "utf-8"))
-        alt.attach(MIMEText(html_body, "html", "utf-8"))
-        msg.attach(alt)
-        for path in attachment_paths:
+    def _build_attachment_parts(outer_msg):
+        for path in (attachment_paths or []):
             if not os.path.exists(path):
                 return f"Error: Attachment not found at {path}"
             ctype, _ = mimetypes.guess_type(path)
@@ -239,12 +234,31 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
                 part.set_payload(f.read())
             encoders.encode_base64(part)
             part.add_header("Content-Disposition", "attachment", filename=os.path.basename(path))
-            msg.attach(part)
+            outer_msg.attach(part)
+        return None
+
+    if use_html:
+        if attachment_paths:
+            msg = MIMEMultipart("mixed")
+            alt = MIMEMultipart("alternative")
+            alt.attach(MIMEText(body, "plain", "utf-8"))
+            alt.attach(MIMEText(html_body, "html", "utf-8"))
+            msg.attach(alt)
+            err = _build_attachment_parts(msg)
+            if err: return err
+        else:
+            msg = MIMEMultipart("alternative")
+            msg.attach(MIMEText(body, "plain", "utf-8"))
+            msg.attach(MIMEText(html_body, "html", "utf-8"))
     else:
-        # No attachments — multipart/alternative (plain + html)
-        msg = MIMEMultipart("alternative")
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
+        # Plain text only
+        if attachment_paths:
+            msg = MIMEMultipart("mixed")
+            msg.attach(MIMEText(body, "plain", "utf-8"))
+            err = _build_attachment_parts(msg)
+            if err: return err
+        else:
+            msg = MIMEText(body, "plain", "utf-8")
 
     msg["Subject"] = subject
     msg["From"]    = SENDER_EMAIL
@@ -340,8 +354,11 @@ Attachments: (if any)
 CRITICAL RULES:
 1. NEVER use placeholders (like [Your Name], [Company Name], etc.). Use the user's resume context to fill in all details, or deduce them from the image.
 2. DO NOT send the email yet. Ask the user for approval.
-3. If they say "yes", "send", or similar, use the `send_email` tool to send it. When calling `send_email`, you MUST pass the attachment path from the draft into the `attachment_paths` argument.
-4. If they ask for changes, update the draft, show it to them again, and ask for approval again.
+3. Once the user approves sending, ask: "Do you want to send this as a styled HTML email or plain text?" Wait for their answer.
+   - If they say "html", "styled", or similar → set use_html=True when calling send_email.
+   - If they say "plain", "simple", "text", or similar → set use_html=False when calling send_email.
+4. Then call `send_email` with use_html set accordingly. MUST pass the attachment path from the draft into the `attachment_paths` argument.
+5. If they ask for changes, update the draft, show it to them again, and ask for approval again.
 
 Here is the user's resume and professional background. Use this context if you need to discuss their skills:
 {resume_context}
