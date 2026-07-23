@@ -2,11 +2,20 @@ import os
 import time
 import threading
 import requests
-import smtplib
 import mimetypes
 import base64
+import json
 from typing import Optional, List
 from email.message import EmailMessage
+
+# Gmail API
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from pydantic import BaseModel, Field
 
 from dotenv import load_dotenv
@@ -113,46 +122,80 @@ class SendEmailInput(BaseModel):
 
 @tool("send_email", args_schema=SendEmailInput)
 def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None, attachment_paths: Optional[List[str]] = None) -> str:
-    """Sends an email using SMTP with optional attachments, CC, and BCC."""
-    SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+    """Sends an email using Gmail API (OAuth2) with optional attachments, CC, and BCC."""
     SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-    SENDER_PASSWORD = os.getenv("SENDER_PASSWORD")
+    if not SENDER_EMAIL:
+        return "Error: SENDER_EMAIL environment variable must be set."
 
-    if not SENDER_EMAIL or not SENDER_PASSWORD:
-        return "Error: SENDER_EMAIL and SENDER_PASSWORD environment variables must be set."
+    # --- Load credentials from Render Secret File or local token.json ---
+    # On Render: store token.json as a Secret File at path /etc/secrets/token.json
+    # Locally: place token.json in the same directory as this script
+    TOKEN_PATH = os.environ.get(
+        "GMAIL_TOKEN_PATH",
+        "/etc/secrets/token.json" if os.path.exists("/etc/secrets/token.json")
+        else os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.json")
+    )
+    CREDS_PATH = os.environ.get(
+        "GMAIL_CREDS_PATH",
+        "/etc/secrets/credentials.json" if os.path.exists("/etc/secrets/credentials.json")
+        else os.path.join(os.path.dirname(os.path.abspath(__file__)), "credentials.json")
+    )
 
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = SENDER_EMAIL
-    msg['To'] = to
-    
-    if cc: msg['Cc'] = cc
-    if bcc: msg['Bcc'] = bcc
-
-    msg.set_content(body)
-
-    if attachment_paths:
-        for path in attachment_paths:
-            if os.path.exists(path):
-                ctype, encoding = mimetypes.guess_type(path)
-                if ctype is None or encoding is not None:
-                    ctype = 'application/octet-stream'
-                maintype, subtype = ctype.split('/', 1)
-                with open(path, 'rb') as f:
-                    file_data = f.read()
-                msg.add_attachment(file_data, maintype=maintype, subtype=subtype, filename=os.path.basename(path))
-            else:
-                return f"Error: Attachment file not found at {path}"
+    SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 
     try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SENDER_EMAIL, SENDER_PASSWORD)
-            server.send_message(msg)
-        return f"Email successfully sent to {to}."
+        creds = None
+        if os.path.exists(TOKEN_PATH):
+            creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                # Persist refreshed token back
+                with open(TOKEN_PATH, "w") as f:
+                    f.write(creds.to_json())
+            else:
+                return ("Error: Gmail token missing or expired. "
+                        "Run generate_token.py locally to create token.json, "
+                        "then upload it as a Secret File on Render.")
     except Exception as e:
-        return f"Failed to send email: {str(e)}"
+        return f"Error loading Gmail credentials: {str(e)}"
+
+    # --- Build the MIME message ---
+    if attachment_paths:
+        msg = MIMEMultipart()
+        msg.attach(MIMEText(body, "plain"))
+        for path in attachment_paths:
+            if not os.path.exists(path):
+                return f"Error: Attachment not found at {path}"
+            ctype, _ = mimetypes.guess_type(path)
+            if ctype is None:
+                ctype = "application/octet-stream"
+            maintype, subtype = ctype.split("/", 1)
+            part = MIMEBase(maintype, subtype)
+            with open(path, "rb") as f:
+                part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", "attachment", filename=os.path.basename(path))
+            msg.attach(part)
+    else:
+        msg = MIMEText(body, "plain")
+
+    msg["Subject"] = subject
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = to
+    if cc:  msg["Cc"] = cc
+    if bcc: msg["Bcc"] = bcc
+
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+
+    try:
+        service = build("gmail", "v1", credentials=creds)
+        service.users().messages().send(
+            userId="me", body={"raw": raw}
+        ).execute()
+        return f"Email successfully sent to {to} via Gmail API."
+    except Exception as e:
+        return f"Failed to send email via Gmail API: {str(e)}"
 
 class DraftEmailFromImagesInput(BaseModel):
     image_paths: List[str] = Field(description="List of local file paths to the images to analyze.")

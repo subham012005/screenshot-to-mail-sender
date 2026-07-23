@@ -36,3 +36,8 @@ build/
 # Database
 *.db
 *.sqlite3
+
+# Gmail OAuth2 secrets — NEVER commit these
+token.json
+credentials.json
+client_secret_*.json
