@@ -31,7 +31,12 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from duckduckgo_search import DDGS
 
 # ================== ENV SETUP ==================
-load_dotenv()
+try:
+    dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+    load_dotenv(dotenv_path)
+except Exception as e:
+    print(f"Warning: Failed to load .env file dynamically ({e}). Loading from environment directly.")
+
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
