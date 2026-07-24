@@ -276,17 +276,20 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
             )
             
             if not has_list_item:
-                # Differentiate between normal text paragraph (wants spaces) and signature/greeting/address (wants <br>)
-                avg_line_len = sum(len(l) for l in lines) / len(lines)
-                ends_with_punctuation = sum(1 for l in lines if l.rstrip() and l.rstrip()[-1] in ('.', '?', '!'))
-                
-                is_signature_or_short = (
-                    block == blocks[-1] or
-                    avg_line_len < 45 or
-                    (ends_with_punctuation / len(lines)) < 0.5
+                # Normal paragraph or greeting or signature.
+                # A block should use <br> (keep line breaks) ONLY if:
+                # - It is the very last block of the email (the signature)
+                # - Or it looks like a contact block (contains email/phone/links/URLs and has short lines)
+                # Otherwise, it is a regular text paragraph and MUST be joined with a space to utilize the full line length!
+                is_last = (blocks.index(block) == len(blocks) - 1)
+                is_contact = any(
+                    "@" in l or 
+                    "http" in l or 
+                    any(c.isdigit() for c in l) and len(l) < 25 
+                    for l in lines
                 )
                 
-                if is_signature_or_short:
+                if is_last or (is_contact and len(lines) > 1):
                     paragraph_content = "<br>".join(lines)
                 else:
                     paragraph_content = " ".join(lines)
