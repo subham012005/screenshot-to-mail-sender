@@ -132,20 +132,11 @@ HTML_EMAIL_TEMPLATE = (
     "<tr><td style='background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);"
     "padding:28px 36px;'>"
     "<p style='margin:0;color:#ffffff;font-size:18px;font-weight:700;"
-    "letter-spacing:0.5px;'>Professional Application</p>"
-    "<p style='margin:4px 0 0;color:#a0b4cc;font-size:13px;'>"
-    "Sent via Subham's AI Mail Assistant</p>"
+    "letter-spacing:0.5px;'>{{SUBJECT}}</p>"
     "</td></tr>"
-    "<tr><td style='padding:36px 36px 24px;'>"
+    "<tr><td style='padding:36px 36px 32px;'>"
     "<div style='color:#1e293b;font-size:15px;line-height:1.8;'>{{BODY}}</div>"
     "</td></tr>"
-    "<tr><td style='padding:0 36px;'>"
-    "<hr style='border:none;border-top:1px solid #e2e8f0;margin:0;'>"
-    "</td></tr>"
-    "<tr><td style='padding:20px 36px 28px;'>"
-    "<p style='margin:0;color:#94a3b8;font-size:12px;'>"
-    "This email was composed and sent by an AI assistant on behalf of the sender."
-    "</p></td></tr>"
     "</table></td></tr></table></body></html>"
 )
 
@@ -203,18 +194,28 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
     # --- Normalize body: collapse hard mid-sentence line breaks into spaces ---
     # The AI wraps lines at ~70 chars using \n. Plain-text email clients render
     # those as actual line breaks, causing the narrow/cluttered look.
-    # We rejoin lines within the same paragraph into one long line.
-    paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
-    normalized_paragraphs = [" ".join(line.strip() for line in p.splitlines() if line.strip()) for p in paragraphs]
+    # We rejoin lines within the same paragraph into one long line for plain text.
+    # However, we preserve intra-paragraph newlines in the HTML version so that
+    # multi-line blocks (e.g., the signature) render correctly with <br> tags.
+    raw_paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
+    # Plain-text: collapse each paragraph's lines into a single long line
+    normalized_paragraphs = [" ".join(line.strip() for line in p.splitlines() if line.strip()) for p in raw_paragraphs]
     body = "\n\n".join(normalized_paragraphs)
 
     # --- Optionally convert plain-text body to styled HTML ---
     html_body = None
     if use_html:
+        # HTML: preserve intra-paragraph line breaks as <br> so multi-line
+        # blocks like the signature are not squished into one line.
         html_paragraphs = "".join(
-            f"<p>{para}</p>" for para in normalized_paragraphs
+            f"<p>{'<br>'.join(line.strip() for line in para.splitlines() if line.strip())}</p>"
+            for para in raw_paragraphs
         )
-        html_body = HTML_EMAIL_TEMPLATE.replace("{{BODY}}", html_paragraphs)
+        html_body = (
+            HTML_EMAIL_TEMPLATE
+            .replace("{{SUBJECT}}", subject)
+            .replace("{{BODY}}", html_paragraphs)
+        )
 
     # --- Build the MIME message ---
     def _build_attachment_parts(outer_msg):
@@ -234,6 +235,7 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
         return None
 
     if use_html:
+        assert html_body is not None  # always set above when use_html=True
         if attachment_paths:
             msg = MIMEMultipart("mixed")
             alt = MIMEMultipart("alternative")
@@ -266,7 +268,7 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
 
     try:
         service = build("gmail", "v1", credentials=creds)
-        service.users().messages().send(
+        service.users().messages().send(  # type: ignore[attr-defined]
             userId="me", body={"raw": raw}
         ).execute()
         return f"Email successfully sent to {to} via Gmail API."
@@ -325,7 +327,7 @@ def draft_email_from_images(image_paths: List[str], instructions: Optional[str] 
         vision_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         message = HumanMessage(content=content_list)
         response = vision_llm.invoke([message])
-        return response.content
+        return str(response.content)
     except Exception as e:
         return f"Error during image analysis: {str(e)}"
 
@@ -361,7 +363,7 @@ Here is the user's resume and professional background. Use this context if you n
 """
 
 agent_executor = create_react_agent(llm, tools)
-chat_history = [SystemMessage(content=SYSTEM_PROMPT)]
+chat_history: list[SystemMessage | HumanMessage | AIMessage] = [SystemMessage(content=SYSTEM_PROMPT)]
 
 # ================== MAIN APP LOGIC ==================
 def process_user_message(message_text: str):
