@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import re
 import requests
 import mimetypes
 import base64
@@ -199,31 +200,117 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
     except Exception as e:
         return f"Error loading Gmail credentials: {str(e)}"
 
-    # --- Normalize body: collapse hard mid-sentence line breaks into spaces ---
-    # The AI wraps lines at ~70 chars using \n. Plain-text email clients render
-    # those as actual line breaks, causing the narrow/cluttered look.
-    # We rejoin lines within the same paragraph into one long line for plain text.
-    # However, we preserve intra-paragraph newlines in the HTML version so that
-    # multi-line blocks (e.g., the signature) render correctly with <br> tags.
-    raw_paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
-    # Plain-text: collapse each paragraph's lines into a single long line
-    normalized_paragraphs = [" ".join(line.strip() for line in p.splitlines() if line.strip()) for p in raw_paragraphs]
+    # --- Normalize body: collapse hard mid-sentence line breaks into spaces while preserving list structures ---
+    paragraphs = body.split("\n\n")
+    normalized_paragraphs = []
+    
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+            
+        lines = para.splitlines()
+        normalized_lines = []
+        current_line = ""
+        
+        for line in lines:
+            line_str = line.strip()
+            if not line_str:
+                continue
+                
+            # Check if line is a list item
+            is_list_item = (
+                line_str.startswith("-") or 
+                line_str.startswith("*") or 
+                line_str.startswith("•") or 
+                (line_str and line_str[0].isdigit() and "." in line_str.split()[0])
+            )
+            
+            if is_list_item:
+                if current_line:
+                    normalized_lines.append(current_line)
+                    current_line = ""
+                normalized_lines.append(line_str)
+            else:
+                if current_line:
+                    current_line += " " + line_str
+                else:
+                    current_line = line_str
+                    
+        if current_line:
+            normalized_lines.append(current_line)
+            
+        normalized_paragraphs.append("\n".join(normalized_lines))
+        
     body = "\n\n".join(normalized_paragraphs)
 
-    # --- Optionally convert plain-text body to styled HTML ---
+    # --- Convert plain-text body to beautiful, styled HTML ---
     html_body = None
     if use_html:
-        # HTML: preserve intra-paragraph line breaks as <br> so multi-line
-        # blocks like the signature are not squished into one line.
-        html_paragraphs = "".join(
-            f"<p>{'<br>'.join(line.strip() for line in para.splitlines() if line.strip())}</p>"
-            for para in raw_paragraphs
+        # Convert **bold** to <strong>bold</strong>
+        processed_text = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", body)
+        
+        # Convert markdown links [text](url) to anchor tags
+        processed_text = re.sub(
+            r"\[(.*?)\]\((.*?)\)", 
+            r'<a href="\2" style="color: #0f3460; text-decoration: underline;">\1</a>', 
+            processed_text
         )
+        
+        # Convert blocks to paragraphs and lists
+        blocks = [b.strip() for b in processed_text.split("\n\n") if b.strip()]
+        html_blocks = []
+        
+        for block in blocks:
+            lines = [line.strip() for line in block.splitlines() if line.strip()]
+            if not lines:
+                continue
+                
+            # Determine if the block contains list items
+            has_list_item = any(
+                line.startswith("-") or 
+                line.startswith("*") or 
+                line.startswith("•") or 
+                (line and line[0].isdigit() and "." in line.split()[0])
+                for line in lines
+            )
+            
+            if not has_list_item:
+                # Normal paragraph: keep consecutive lines joined by <br> (essential for signatures/addresses)
+                paragraph_content = "<br>".join(lines)
+                html_blocks.append(f"<p style='margin-top: 0; margin-bottom: 16px; line-height: 1.8;'>{paragraph_content}</p>")
+            else:
+                # Block has list items: convert items to standard <li> inside <ul>/<ol>
+                html_list_items = []
+                list_type = "ul"
+                
+                for line in lines:
+                    match_bullet = re.match(r"^[-*•]\s+(.*)", line)
+                    match_numbered = re.match(r"^(\d+)[.)]\s+(.*)", line)
+                    
+                    if match_bullet:
+                        list_type = "ul"
+                        html_list_items.append(f"<li style='margin-bottom: 8px;'>{match_bullet.group(1)}</li>")
+                    elif match_numbered:
+                        list_type = "ol"
+                        html_list_items.append(f"<li style='margin-bottom: 8px;'>{match_numbered.group(2)}</li>")
+                    else:
+                        # Non-list item line inside list block
+                        if html_list_items:
+                            html_blocks.append(f"<{list_type} style='margin-top: 8px; margin-bottom: 16px; padding-left: 20px; color: #334155;'>{''.join(html_list_items)}</{list_type}>")
+                            html_list_items = []
+                        html_blocks.append(f"<p style='margin-top: 0; margin-bottom: 16px; line-height: 1.8;'>{line}</p>")
+                        
+                if html_list_items:
+                    html_blocks.append(f"<{list_type} style='margin-top: 8px; margin-bottom: 16px; padding-left: 20px; color: #334155;'>{''.join(html_list_items)}</{list_type}>")
+        
+        html_paragraphs = "".join(html_blocks)
         html_body = (
             HTML_EMAIL_TEMPLATE
             .replace("{{SUBJECT}}", subject)
             .replace("{{BODY}}", html_paragraphs)
         )
+
 
     # --- Build the MIME message ---
     def _build_attachment_parts(outer_msg):
@@ -445,7 +532,10 @@ If the user wants to reset, clear, forget, start over, or anything similar → c
 After it returns, reply: "🧹 Memory cleared! Starting fresh."
 
 === CRITICAL RULES ===
-1. ZERO PLACEHOLDERS. Real data only: Subham Sharma | +917988944185 | subham1401sh@gmail.com | https://linkedin.com/in/subham1401
+1. ZERO PLACEHOLDERS. Never write bracketed placeholder text like [Recipient's Name], [Company Name], [Your Name], [Contact Info], etc.
+   - If the recipient's name is unknown, greet with "Hi there,", "Dear Hiring Team,", or "Hello,". Never use a placeholder.
+   - If the company name is unknown, say "your company" or "your business".
+   - Use Subham's real details: Subham Sharma | +917988944185 | subham1401sh@gmail.com | https://linkedin.com/in/subham1401
 2. ALWAYS ask clarifying questions if context is insufficient — never guess and write generic.
 3. ALWAYS use web_search before drafting proposals. Generic emails get ignored.
 4. After drafting, ask: "Should I send this?" — wait for approval.
