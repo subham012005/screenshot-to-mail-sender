@@ -331,9 +331,25 @@ def draft_email_from_images(image_paths: List[str], instructions: Optional[str] 
     except Exception as e:
         return f"Error during image analysis: {str(e)}"
 
+# ================== MEMORY TOOL ==================
+# chat_history is declared here so clear_memory tool can reference it by name.
+chat_history: list[SystemMessage | HumanMessage | AIMessage] = []
+
+@tool("clear_memory")
+def clear_memory() -> str:
+    """Clears the entire conversation history and starts fresh.
+    Call this whenever the user wants to forget, reset, clear, start over,
+    wipe memory, begin again, or anything with similar intent."""
+    global chat_history
+    if chat_history:
+        system_msg = chat_history[0]
+        chat_history.clear()
+        chat_history.append(system_msg)
+    return "MEMORY_CLEARED"
+
 # ================== LANGGRAPH AGENT SETUP ==================
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-tools = [send_email, draft_email_from_images]
+tools = [send_email, draft_email_from_images, clear_memory]
 
 SYSTEM_PROMPT = f"""You are an email drafting and sending assistant for a freelancer/job seeker named Subham Sharma.
 Your ONLY job is to draft professional emails and send them using the available tools.
@@ -361,6 +377,10 @@ Content:
 (full, finalized, professional email body)
 Attachments: (resume path if relevant, else omit)
 
+=== MEMORY MANAGEMENT ===
+If the user wants to reset, clear, forget, start over, wipe memory, begin fresh, or anything with similar intent → call the `clear_memory` tool immediately.
+After the tool returns, reply: "🧹 Memory cleared! Starting fresh."
+
 === CRITICAL RULES (violations are unacceptable) ===
 1. ZERO PLACEHOLDERS. Never write [Your Name], [Company], [Insert here], [Contact Info], etc.
    Use the real data: name = Subham Sharma, phone = +917988944185, email = subham1401sh@gmail.com, LinkedIn = https://linkedin.com/in/subham1401
@@ -373,34 +393,35 @@ Attachments: (resume path if relevant, else omit)
 
 
 agent_executor = create_react_agent(llm, tools)
-chat_history: list[SystemMessage | HumanMessage | AIMessage] = [SystemMessage(content=SYSTEM_PROMPT)]
+# Populate chat_history with the system prompt (declared earlier before clear_memory tool)
+chat_history.append(SystemMessage(content=SYSTEM_PROMPT))
 
 # ================== MAIN APP LOGIC ==================
 def process_user_message(message_text: str):
     print(f"\n[Telegram] Processing message: {message_text}")
-
-    # --- Memory clear command ---
-    if message_text.strip().lower() in ("/clear", "clear memory", "reset memory", "/reset"):
-        chat_history.clear()
-        chat_history.append(SystemMessage(content=SYSTEM_PROMPT))
-        send_telegram_message("🧹 Memory cleared! I've forgotten our previous conversation. Starting fresh.")
-        print("[Agent] Memory cleared by user.")
-        return
-
+    response = ""
     try:
         chat_history.append(HumanMessage(content=message_text))
         result = agent_executor.invoke({"messages": chat_history})
         final_messages = result["messages"]
-        response = final_messages[-1].content
-        chat_history.append(AIMessage(content=response))
-        
-        if len(chat_history) > 20:
-            chat_history.pop(1)
-            chat_history.pop(1)
-            
+        response = str(final_messages[-1].content)
+
+        # If agent called clear_memory, history is already wiped inside the tool.
+        # Just ensure the system prompt is still present and send a clean reply.
+        if "MEMORY_CLEARED" in response:
+            response = "🧹 Memory cleared! I've forgotten our previous conversation. Starting fresh."
+            if not any(isinstance(m, SystemMessage) for m in chat_history):
+                chat_history.insert(0, SystemMessage(content=SYSTEM_PROMPT))
+        else:
+            chat_history.append(AIMessage(content=response))
+            # Keep history bounded to avoid token bloat
+            if len(chat_history) > 20:
+                chat_history.pop(1)
+                chat_history.pop(1)
+
     except Exception as e:
         response = f"Sorry, I encountered an error: {e}"
-        
+
     print(f"[Agent] Replied: {response}")
     send_telegram_message(response)
 
