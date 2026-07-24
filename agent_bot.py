@@ -465,9 +465,12 @@ def _send_email_core(to: str, subject: str, body: str, cc: Optional[str] = None,
             creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                with open(TOKEN_PATH, "w") as f:
-                    f.write(creds.to_json())
+                try:
+                    creds.refresh(Request())
+                    with open(TOKEN_PATH, "w") as f:
+                        f.write(creds.to_json())
+                except Exception as write_err:
+                    print(f"Warning: Failed to write refreshed token to {TOKEN_PATH}: {write_err}. Proceeding with refreshed credentials in-memory.")
             else:
                 return ("Error: Gmail token missing or expired. "
                         "Run generate_token.py locally to create token.json, "
