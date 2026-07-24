@@ -564,11 +564,10 @@ After it returns, reply: "🧹 Memory cleared! Starting fresh."
 3. ALWAYS use web_search before drafting proposals. Generic emails get ignored.
 4. After drafting, ask: "Should I send this?" — wait for approval.
 5. Once approved, ask: "HTML (styled) or plain text?"
-   - User says "html", "styled", "fancy", "rich" → call send_email with use_html=True
-   - User says "plain", "text", "simple" → call send_email with use_html=False
-   - User says "both", "either", "any", or is unsure → call send_email with use_html=True
-     (HTML mode already sends BOTH an HTML version AND a plain-text fallback inside the same email)
-   - DO NOT ask again — pick use_html=True if in any doubt and call send_email immediately.
+   - If the user specifies "plain" or "text" or "simple" → you MUST call send_email with use_html=False. This is a strict requirement. Do NOT use HTML.
+   - If the user specifies "html", "styled", "fancy", "rich", or is unsure → call send_email with use_html=True.
+   - If the user says "both" or "either" → call send_email with use_html=True (since HTML mode includes a plain-text fallback automatically).
+   - DO NOT ask again — make the call immediately with the correct parameter.
 6. NEVER EVER claim a technical error or say you "cannot send". You have a fully working send_email tool.
    If send_email fails, report the exact error message from the tool — do not invent excuses.
    NEVER refuse to call send_email after the user approves sending.
