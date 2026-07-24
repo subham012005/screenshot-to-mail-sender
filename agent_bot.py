@@ -326,6 +326,17 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
             .replace("{{SUBJECT}}", subject)
             .replace("{{BODY}}", html_paragraphs)
         )
+        # Write debug files
+        try:
+            debug_dir = os.path.dirname(os.path.abspath(__file__))
+            with open(os.path.join(debug_dir, "last_debug_html.html"), "w", encoding="utf-8") as f:
+                f.write(html_body)
+            with open(os.path.join(debug_dir, "last_debug_plain.txt"), "w", encoding="utf-8") as f:
+                f.write(body)
+            print(f"[Debug] Wrote last_debug_html.html and last_debug_plain.txt in {debug_dir}")
+        except Exception as e:
+            print("[Debug] Error writing debug files:", e)
+
 
 
     # --- Build the MIME message ---
