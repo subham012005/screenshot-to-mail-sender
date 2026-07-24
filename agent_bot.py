@@ -585,7 +585,29 @@ def process_user_message(message_text: str):
     print(f"\n[Telegram] Processing message: {message_text}")
     response = ""
     try:
+        # Check if the user is answering the format question from the last AI turn
+        is_format_answer = False
+        if chat_history:
+            # Look for the last AI message in history
+            last_ai_msg = ""
+            for msg in reversed(chat_history):
+                if isinstance(msg, AIMessage):
+                    last_ai_msg = msg.content
+                    break
+            if last_ai_msg and isinstance(last_ai_msg, str) and ("html" in last_ai_msg.lower() or "styled" in last_ai_msg.lower()) and "plain" in last_ai_msg.lower():
+                is_format_answer = True
+
         chat_history.append(HumanMessage(content=message_text))
+        
+        if is_format_answer:
+            # Determine format
+            is_plain = any(w in message_text.lower() for w in ["plain", "text", "simple", "pain"])
+            target_format = "plain text (use_html=False)" if is_plain else "styled HTML (use_html=True)"
+            chat_history.append(SystemMessage(
+                content=f"CRITICAL: The user has selected {target_format}. You MUST call the `send_email` tool now "
+                        f"with use_html={'False' if is_plain else 'True'}. Do not write any message to the user "
+                        f"without calling this tool first."
+            ))
         
         # Self-correction loop: if LLM generates placeholders, force it to rewrite
         max_attempts = 3
