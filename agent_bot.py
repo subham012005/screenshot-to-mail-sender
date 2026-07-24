@@ -1,3 +1,4 @@
+
 import os
 import time
 import threading
@@ -8,7 +9,7 @@ import base64
 import json
 from typing import Optional, List
 from email.message import EmailMessage
-
+import html
 # Gmail API
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -120,10 +121,22 @@ try:
 except Exception:
     pass
 
-# ================== HTML EMAIL TEMPLATE ==================
+# ================== HTML EMAIL TEMPLATES ==================
 # Defined at module level (column 0) to avoid f-string indentation SyntaxErrors.
 # {{BODY}} is replaced at send time via str.replace().
-HTML_EMAIL_TEMPLATE = (
+NORMAL_EMAIL_TEMPLATE = (
+    "<!DOCTYPE html>"
+    "<html lang='en'>"
+    "<head>"
+    "<meta charset='UTF-8'>"
+    "</head>"
+    "<body style='font-family: Arial, sans-serif; font-size: 14px; color: #222222; line-height: 1.5; margin: 20px;'>"
+    "{{BODY}}"
+    "</body>"
+    "</html>"
+)
+
+MODERN_EMAIL_TEMPLATE = (
     "<!DOCTYPE html>"
     "<html lang='en'>"
     "<head>"
@@ -135,50 +148,313 @@ HTML_EMAIL_TEMPLATE = (
     "<table width='100%' cellpadding='0' cellspacing='0' "
     "style='background-color:#f4f6f8;padding:30px 0;'>"
     "<tr><td align='center'>"
-    "<table width='620' cellpadding='0' cellspacing='0' "
-    "style='background:#ffffff;border-radius:10px;overflow:hidden;"
+    "<table width='100%' cellpadding='0' cellspacing='0' "
+    "style='width:100%;max-width:1000px;background:#ffffff;"
+    "border-radius:10px;overflow:hidden;"
     "box-shadow:0 2px 12px rgba(0,0,0,0.08);'>"
     "<tr><td style='background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);"
     "padding:28px 36px;'>"
     "<p style='margin:0;color:#ffffff;font-size:18px;font-weight:700;"
     "letter-spacing:0.5px;'>{{SUBJECT}}</p>"
     "</td></tr>"
-    "<tr><td style='padding:36px 36px 32px;'>"
+    "<tr><td style='padding:24px;'>"
     "<div style='color:#1e293b;font-size:15px;line-height:1.8;'>{{BODY}}</div>"
     "</td></tr>"
     "</table></td></tr></table></body></html>"
 )
 
+# ================== EMAIL FORMATTING ENGINE ==================
+
+def apply_inline_styles(text: str) -> str:
+    # Escape plain-text HTML characters first
+    processed = html.escape(text, quote=False)
+
+    processed = re.sub(
+        r"\*\*(.*?)\*\*",
+        r"<strong>\1</strong>",
+        processed
+    )
+
+    # Temporarily protect Markdown links
+    protected_links = []
+
+    def protect_markdown_link(match):
+        link_html = (
+            f'<a href="{match.group(2)}" '
+            f'style="color:#0f3460;text-decoration:underline;">'
+            f'{match.group(1)}</a>'
+        )
+        placeholder = f"__PROTECTED_LINK_{len(protected_links)}__"
+        protected_links.append(link_html)
+        return placeholder
+
+    processed = re.sub(
+        r"\[([^\]]+)\]\((https?://[^\s)]+)\)",
+        protect_markdown_link,
+        processed
+    )
+
+    # Convert remaining plain URLs only
+    processed = re.sub(
+        r'(?<!["\'])\bhttps?://[^\s<>]+',
+        lambda match: (
+            f'<a href="{match.group(0)}" '
+            f'style="color:#0f3460;text-decoration:underline;">'
+            f'{match.group(0)}</a>'
+        ),
+        processed
+    )
+
+    # Restore protected Markdown links
+    for index, link_html in enumerate(protected_links):
+        processed = processed.replace(
+            f"__PROTECTED_LINK_{index}__",
+            link_html
+        )
+
+    return processed
+
+def is_list_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if stripped.startswith(('-', '*', '•')):
+        return True
+    if re.match(r'^\d+[.)](?:\s+|$)', stripped):
+        return True
+    return False
+
+def is_greeting_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if re.match(r'^(hi|hello|dear|hey)\b', stripped, re.IGNORECASE):
+        if len(stripped) < 40 or stripped[-1] in [',', ':', '!']:
+            return True
+    return False
+
+def find_signature_start_index(lines: list[str]) -> int:
+    signoff_pattern = re.compile(
+        r"^(best|best regards|warm regards|kind regards|regards|"
+        r"sincerely|thanks|thank you|cheers|warmly|respectfully|"
+        r"with appreciation)[,.]?$",
+        re.IGNORECASE
+    )
+
+    # Prefer an explicit sign-off
+    for i, line in enumerate(lines):
+        if signoff_pattern.match(line.strip()):
+            return i
+
+    # Otherwise detect a compact contact block near the bottom
+    contact_pattern = re.compile(
+        r"(^subham(?: sharma)?$)|"
+        r"([\w.\-+]+@[\w.\-]+\.\w+)|"
+        r"(https?://|www\.|linkedin\.com|github\.com)|"
+        r"(^\+?[\d\s\-()]{7,20}$)",
+        re.IGNORECASE
+    )
+
+    first_contact_index = len(lines)
+    found_contact = False
+
+    for i in range(len(lines) - 1, -1, -1):
+        stripped = lines[i].strip()
+
+        if not stripped:
+            if found_contact:
+                continue
+            continue
+
+        if contact_pattern.search(stripped):
+            first_contact_index = i
+            found_contact = True
+            continue
+
+        if found_contact:
+            break
+
+    return first_contact_index
+
+def format_html_list(lines: list[str]) -> str:
+    if not lines:
+        return ""
+    # Decide list type based on first item
+    first_stripped = lines[0].strip()
+    is_ol = bool(re.match(r'^\d+[.)]', first_stripped))
+    list_tag = "ol" if is_ol else "ul"
+    
+    html_items = []
+    for line in lines:
+        stripped = line.strip()
+        # Strip the bullet/numbered marker
+        if is_ol:
+            content = re.sub(r'^\d+[.)]\s*', '', stripped)
+        else:
+            content = re.sub(r'^[-*•]\s*', '', stripped)
+            
+        content = apply_inline_styles(content)
+        html_items.append(f"<li style='margin-bottom: 8px;'>{content}</li>")
+        
+    return f"<{list_tag} style='margin-top: 8px; margin-bottom: 16px; padding-left: 20px; color: #334155;'>{''.join(html_items)}</{list_tag}>"
+
+def parse_and_format_email(body: str, subject: str, template_style: str = "normal") -> tuple[str, str]:
+    template = MODERN_EMAIL_TEMPLATE if template_style == "modern" else NORMAL_EMAIL_TEMPLATE
+
+    # Safety fallback if HTML is accidentally passed
+    if re.search(r"<(p|br|div|span|a|ul|ol|li)\b", body, re.IGNORECASE):
+        plain_body = re.sub(
+            r"<br\s*/?>",
+            "\n",
+            body,
+            flags=re.IGNORECASE
+        )
+        plain_body = re.sub(
+            r"</(?:p|div|li)>",
+            "\n\n",
+            plain_body,
+            flags=re.IGNORECASE
+        )
+        plain_body = re.sub(r"<[^>]+>", "", plain_body)
+        plain_body = html.unescape(plain_body)
+        plain_body = re.sub(r"\n{3,}", "\n\n", plain_body).strip()
+
+        html_body = (
+            template
+            .replace("{{SUBJECT}}", html.escape(subject))
+            .replace("{{BODY}}", body)
+        )
+
+        return plain_body, html_body
+
+    # Split raw body into lines
+    lines = body.splitlines()
+
+    # Find signature block
+    sig_start_idx = find_signature_start_index(lines)
+
+    # Group lines into blocks
+    blocks = []
+    current_block = None
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        if not stripped:
+            line_type = "blank"
+        elif i >= sig_start_idx:
+            line_type = "signature"
+        elif is_list_line(line):
+            line_type = "list"
+        elif is_greeting_line(line):
+            line_type = "greeting"
+        else:
+            line_type = "normal"
+
+        if current_block is None:
+            current_block = {
+                "type": line_type,
+                "lines": []
+            }
+
+            if line_type != "blank":
+                current_block["lines"].append(stripped)
+
+        elif current_block["type"] == line_type:
+            if line_type != "blank":
+                current_block["lines"].append(stripped)
+
+        else:
+            blocks.append(current_block)
+
+            current_block = {
+                "type": line_type,
+                "lines": []
+            }
+
+            if line_type != "blank":
+                current_block["lines"].append(stripped)
+
+    if current_block is not None:
+        blocks.append(current_block)
+
+    # Format plain-text body
+    plain_parts = []
+
+    for block in blocks:
+        block_type = block["type"]
+        block_lines = block["lines"]
+
+        if block_type == "blank":
+            continue
+
+        if block_type == "normal":
+            plain_parts.append(" ".join(block_lines))
+        else:
+            plain_parts.append("\n".join(block_lines))
+
+    plain_body = "\n\n".join(plain_parts).strip()
+
+    # Format HTML body
+    html_blocks = []
+
+    for block in blocks:
+        block_type = block["type"]
+        block_lines = block["lines"]
+
+        if block_type == "blank":
+            continue
+
+        if block_type == "list":
+            html_blocks.append(format_html_list(block_lines))
+            continue
+
+        if block_type == "normal":
+            content = apply_inline_styles(
+                " ".join(block_lines)
+            )
+
+        elif block_type == "signature":
+            content = "<br>".join(
+                apply_inline_styles(line)
+                for line in block_lines
+            )
+
+        else:  # greeting
+            content = apply_inline_styles(
+                " ".join(block_lines)
+            )
+
+        html_blocks.append(
+            "<p style='margin-top:0;"
+            "margin-bottom:16px;"
+            "line-height:1.8;'>"
+            f"{content}"
+            "</p>"
+        )
+
+    html_paragraphs = "".join(html_blocks)
+
+    html_body = (
+        template
+        .replace("{{SUBJECT}}", html.escape(subject))
+        .replace("{{BODY}}", html_paragraphs)
+    )
+
+    return plain_body, html_body
+    
 # ================== EMAIL & AI TOOLS ==================
 
-class SendEmailInput(BaseModel):
-    to: str = Field(description="The email address of the primary recipient")
-    subject: str = Field(description="The subject of the email")
-    body: str = Field(description="The body content of the email")
-    cc: Optional[str] = Field(None, description="Comma-separated email addresses for CC")
-    bcc: Optional[str] = Field(None, description="Comma-separated email addresses for BCC")
-    attachment_paths: Optional[List[str]] = Field(None, description="List of file paths for attachments")
-    use_html: bool = Field(True, description="If True, send as a styled HTML email. If False, send as plain text.")
-
-@tool("send_email", args_schema=SendEmailInput)
-def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None, attachment_paths: Optional[List[str]] = None, use_html: bool = True) -> str:
-    """Sends an email using Gmail API (OAuth2) with optional attachments, CC, and BCC. use_html controls whether to send styled HTML or plain text."""
+def _send_email_core(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None, attachment_paths: Optional[List[str]] = None, template_style: str = "normal") -> str:
     SENDER_EMAIL = os.getenv("SENDER_EMAIL")
     if not SENDER_EMAIL:
         return "Error: SENDER_EMAIL environment variable must be set."
 
     # --- Load credentials from Render Secret File or local token.json ---
-    # On Render: store token.json as a Secret File at path /etc/secrets/token.json
-    # Locally: place token.json in the same directory as this script
     TOKEN_PATH = os.environ.get(
         "GMAIL_TOKEN_PATH",
         "/etc/secrets/token.json" if os.path.exists("/etc/secrets/token.json")
         else os.path.join(os.path.dirname(os.path.abspath(__file__)), "token.json")
-    )
-    CREDS_PATH = os.environ.get(
-        "GMAIL_CREDS_PATH",
-        "/etc/secrets/credentials.json" if os.path.exists("/etc/secrets/credentials.json")
-        else os.path.join(os.path.dirname(os.path.abspath(__file__)), "credentials.json")
     )
 
     SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
@@ -190,7 +466,6 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
-                # Persist refreshed token back
                 with open(TOKEN_PATH, "w") as f:
                     f.write(creds.to_json())
             else:
@@ -200,140 +475,15 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
     except Exception as e:
         return f"Error loading Gmail credentials: {str(e)}"
 
-    # --- Normalize body: collapse hard mid-sentence line breaks into spaces while preserving list and signature structures ---
-    def _normalize_para(p_text: str, is_l: bool) -> str:
-        lines = [line.strip() for line in p_text.splitlines() if line.strip()]
-        if not lines:
-            return ""
-            
-        # Check if contains list items
-        has_list = any(
-            l.startswith("-") or 
-            l.startswith("*") or 
-            l.startswith("•") or 
-            (l and l[0].isdigit() and "." in l.split()[0])
-            for l in lines
-        )
-        if has_list:
-            return "\n".join(lines)
-            
-        # Check if signature or contact info block
-        avg_len = sum(len(l) for l in lines) / len(lines)
-        is_cnt = any(
-            "@" in l or 
-            "http" in l or 
-            any(c.isdigit() for c in l) and len(l) < 25 
-            for l in lines
-        )
-        if is_l or avg_len < 45 or (is_cnt and len(lines) > 1):
-            return "\n".join(lines)
-        else:
-            return " ".join(lines)
-
-    raw_paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
-    normalized_paragraphs = []
-    for idx, para in enumerate(raw_paragraphs):
-        is_last_para = (idx == len(raw_paragraphs) - 1)
-        normalized_paragraphs.append(_normalize_para(para, is_last_para))
-        
-    body = "\n\n".join(normalized_paragraphs)
-
-    # --- Convert plain-text body to beautiful, styled HTML ---
-    html_body = None
-    if use_html:
-        # Convert **bold** to <strong>bold</strong>
-        processed_text = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", body)
-        
-        # Convert markdown links [text](url) to anchor tags
-        processed_text = re.sub(
-            r"\[(.*?)\]\((.*?)\)", 
-            r'<a href="\2" style="color: #0f3460; text-decoration: underline;">\1</a>', 
-            processed_text
-        )
-        
-        # Convert blocks to paragraphs and lists
-        blocks = [b.strip() for b in processed_text.split("\n\n") if b.strip()]
-        html_blocks = []
-        
-        for block in blocks:
-            lines = [line.strip() for line in block.splitlines() if line.strip()]
-            if not lines:
-                continue
-                
-            # Determine if the block contains list items
-            has_list_item = any(
-                line.startswith("-") or 
-                line.startswith("*") or 
-                line.startswith("•") or 
-                (line and line[0].isdigit() and "." in line.split()[0])
-                for line in lines
-            )
-            
-            if not has_list_item:
-                # Normal paragraph or greeting or signature.
-                # A block should use <br> (keep line breaks) ONLY if:
-                # - It is the very last block of the email (the signature)
-                # - Or it looks like a contact block (contains email/phone/links/URLs and has short lines)
-                # Otherwise, it is a regular text paragraph and MUST be joined with a space to utilize the full line length!
-                is_last = (blocks.index(block) == len(blocks) - 1)
-                is_contact = any(
-                    "@" in l or 
-                    "http" in l or 
-                    any(c.isdigit() for c in l) and len(l) < 25 
-                    for l in lines
-                )
-                
-                if is_last or (is_contact and len(lines) > 1):
-                    paragraph_content = "<br>".join(lines)
-                else:
-                    paragraph_content = " ".join(lines)
-                    
-                html_blocks.append(f"<p style='margin-top: 0; margin-bottom: 16px; line-height: 1.8;'>{paragraph_content}</p>")
-            else:
-                # Block has list items: convert items to standard <li> inside <ul>/<ol>
-                html_list_items = []
-                list_type = "ul"
-                
-                for line in lines:
-                    match_bullet = re.match(r"^[-*•]\s+(.*)", line)
-                    match_numbered = re.match(r"^(\d+)[.)]\s+(.*)", line)
-                    
-                    if match_bullet:
-                        list_type = "ul"
-                        html_list_items.append(f"<li style='margin-bottom: 8px;'>{match_bullet.group(1)}</li>")
-                    elif match_numbered:
-                        list_type = "ol"
-                        html_list_items.append(f"<li style='margin-bottom: 8px;'>{match_numbered.group(2)}</li>")
-                    else:
-                        # Non-list item line inside list block
-                        if html_list_items:
-                            html_blocks.append(f"<{list_type} style='margin-top: 8px; margin-bottom: 16px; padding-left: 20px; color: #334155;'>{''.join(html_list_items)}</{list_type}>")
-                            html_list_items = []
-                        html_blocks.append(f"<p style='margin-top: 0; margin-bottom: 16px; line-height: 1.8;'>{line}</p>")
-                        
-                if html_list_items:
-                    html_blocks.append(f"<{list_type} style='margin-top: 8px; margin-bottom: 16px; padding-left: 20px; color: #334155;'>{''.join(html_list_items)}</{list_type}>")
-        
-        html_paragraphs = "".join(html_blocks)
-        html_body = (
-            HTML_EMAIL_TEMPLATE
-            .replace("{{SUBJECT}}", subject)
-            .replace("{{BODY}}", html_paragraphs)
-        )
-
-    # Write debug files for logging/analysis
-    try:
-        debug_dir = os.path.dirname(os.path.abspath(__file__))
-        if html_body:
-            with open(os.path.join(debug_dir, "last_debug_html.html"), "w", encoding="utf-8") as f:
-                f.write(html_body)
-        with open(os.path.join(debug_dir, "last_debug_plain.txt"), "w", encoding="utf-8") as f:
-            f.write(body)
-        print(f"[Debug] Wrote last_debug_html.html and last_debug_plain.txt in {debug_dir}")
-    except Exception as e:
-        print("[Debug] Error writing debug files:", e)
-
-
+    # Normalize accidental HTML from the LLM before formatting
+    if re.search(r"<[^>]+>", body):
+        body = re.sub(r"<br\s*/?>", "\n", body, flags=re.IGNORECASE)
+        body = re.sub(r"</(?:p|div|li)>", "\n\n", body, flags=re.IGNORECASE)
+        body = re.sub(r"<[^>]+>", "", body)
+        body = html.unescape(body).strip()
+    
+    body, html_body = parse_and_format_email(body, subject, template_style)
+    
 
 
     # --- Build the MIME message ---
@@ -353,29 +503,19 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
             outer_msg.attach(part)
         return None
 
-    if use_html:
-        assert html_body is not None  # always set above when use_html=True
-        if attachment_paths:
-            msg = MIMEMultipart("mixed")
-            alt = MIMEMultipart("alternative")
-            alt.attach(MIMEText(body, "plain", "utf-8"))
-            alt.attach(MIMEText(html_body, "html", "utf-8"))
-            msg.attach(alt)
-            err = _build_attachment_parts(msg)
-            if err: return err
-        else:
-            msg = MIMEMultipart("alternative")
-            msg.attach(MIMEText(body, "plain", "utf-8"))
-            msg.attach(MIMEText(html_body, "html", "utf-8"))
+    # Both styles are packaged as MIME multipart alternative (HTML + Plain text fallback)
+    if attachment_paths:
+        msg = MIMEMultipart("mixed")
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(body, "plain", "utf-8"))
+        alt.attach(MIMEText(html_body, "html", "utf-8"))
+        msg.attach(alt)
+        err = _build_attachment_parts(msg)
+        if err: return err
     else:
-        # Plain text only
-        if attachment_paths:
-            msg = MIMEMultipart("mixed")
-            msg.attach(MIMEText(body, "plain", "utf-8"))
-            err = _build_attachment_parts(msg)
-            if err: return err
-        else:
-            msg = MIMEText(body, "plain", "utf-8")
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     msg["Subject"] = subject
     msg["From"]    = SENDER_EMAIL
@@ -393,6 +533,35 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
         return f"Email successfully sent to {to} via Gmail API."
     except Exception as e:
         return f"Failed to send email via Gmail API: {str(e)}"
+
+
+class SendNormalEmailInput(BaseModel):
+    to: str = Field(description="The email address of the primary recipient")
+    subject: str = Field(description="The subject of the email")
+    body: str = Field(description="The body content of the email")
+    cc: Optional[str] = Field(None, description="Comma-separated email addresses for CC")
+    bcc: Optional[str] = Field(None, description="Comma-separated email addresses for BCC")
+    attachment_paths: Optional[List[str]] = Field(None, description="List of file paths for attachments")
+
+@tool("send_normal_email", args_schema=SendNormalEmailInput)
+def send_normal_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None, attachment_paths: Optional[List[str]] = None) -> str:
+    """Sends a clean, personal-style email (normal/plain text layout, looks like a normal typed letter, wraps dynamically to fit screen width)."""
+    return _send_email_core(to, subject, body, cc, bcc, attachment_paths, template_style="normal")
+
+
+class SendModernEmailInput(BaseModel):
+    to: str = Field(description="The email address of the primary recipient")
+    subject: str = Field(description="The subject of the email")
+    body: str = Field(description="The body content of the email")
+    cc: Optional[str] = Field(None, description="Comma-separated email addresses for CC")
+    bcc: Optional[str] = Field(None, description="Comma-separated email addresses for BCC")
+    attachment_paths: Optional[List[str]] = Field(None, description="List of file paths for attachments")
+
+@tool("send_modern_email", args_schema=SendModernEmailInput)
+def send_modern_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: Optional[str] = None, attachment_paths: Optional[List[str]] = None) -> str:
+    """Sends a styled, modern-style email (fancy newsletter/marketing card layout with background color, rounded corners, drop shadow, and gradient header banner)."""
+    return _send_email_core(to, subject, body, cc, bcc, attachment_paths, template_style="modern")
+
 
 
 class DraftEmailFromImagesInput(BaseModel):
@@ -504,7 +673,7 @@ def web_search(query: str) -> str:
 
 # ================== LANGGRAPH AGENT SETUP ==================
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-tools = [send_email, draft_email_from_images, clear_memory, web_search]
+tools = [send_normal_email, send_modern_email, draft_email_from_images, clear_memory, web_search]
 
 SYSTEM_PROMPT = f"""You are an elite email strategist and ghostwriter for Subham Sharma, a freelancer/developer.
 Your goal is NOT to write generic emails. Every email must feel handcrafted, specific, and high-converting.
@@ -535,10 +704,37 @@ Using your research + user context + resume below, draft the email:
 - Open directly with a specific observation, hook, or casual greeting: e.g. "Hi [Name] -", "Hello [Name] -", or simply start with the point.
 - Write in a direct, casual-professional, conversational tone. Write like a colleague or fellow business owner sending a quick, helpful note, not like a sales bot or corporate marketer.
 - DO NOT use formal list structures with bolded bullet headers (e.g. "- **Feature Name:** Description"). Bulleted lists with bold titles scream "AI generated". Instead, use short, natural flowing sentences to describe features, or simple un-bolded bullet points if needed.
-- Write each paragraph as a single continuous line (do NOT wrap lines or insert newlines at 70 characters). Only use single newlines for the signature block.
+- Write each paragraph and list item as a single continuous line. NEVER manually wrap lines or insert newlines at a fixed character limit (like 70 or 80 characters). Normal sentences within the same paragraph must be written consecutively without line breaks. Only use single newlines for list items and the signature/contact block.
 - Keep the entire email under 150 words. Be concise and high-impact.
 - Close with a low-friction, natural question (e.g. "Worth a quick chat?", "Are you open to this?", "Let me know if you'd like to see a demo").
 
+IMPORTANT:
+When calling the send_normal_email or send_modern_email tools, the body argument MUST be plain text only.
+
+Never include HTML tags such as:
+<p>
+<br>
+<div>
+<span>
+<a>
+<ul>
+<li>
+
+Never include HTML inside the tool body argument. The Python formatter generates the HTML automatically behind the scenes.
+
+Use only plain text with blank lines between paragraphs.
+
+Example:
+
+Hi there,
+
+I wanted to...
+
+Best,
+Subham Sharma
++917988944185
+subham1401sh@gmail.com
+https://linkedin.com/in/subham1401
 
 === WHEN THE USER SENDS IMAGES ===
 Use the `draft_email_from_images` tool first to extract context from the image.
@@ -566,14 +762,14 @@ After it returns, reply: "🧹 Memory cleared! Starting fresh."
 2. ALWAYS ask clarifying questions if context is insufficient — never guess and write generic.
 3. ALWAYS use web_search before drafting proposals. Generic emails get ignored.
 4. After drafting, ask: "Should I send this?" — wait for approval.
-5. Once approved, ask: "HTML (styled) or plain text?"
-   - If the user specifies "plain" or "text" or "simple" → you MUST call send_email with use_html=False. This is a strict requirement. Do NOT use HTML.
-   - If the user specifies "html", "styled", "fancy", "rich", or is unsure → call send_email with use_html=True.
-   - If the user says "both" or "either" → call send_email with use_html=True (since HTML mode includes a plain-text fallback automatically).
-   - DO NOT ask again — make the call immediately with the correct parameter.
-6. NEVER EVER claim a technical error or say you "cannot send". You have a fully working send_email tool.
-   If send_email fails, report the exact error message from the tool — do not invent excuses.
-   NEVER refuse to call send_email after the user approves sending.
+5. Once approved, ask: "Modern (fancy styled layout) or Normal (clean simple text layout)?"
+   - If the user specifies "normal", "plain", "text", "simple", or "traditional" → call send_normal_email.
+   - If the user specifies "modern", "html", "styled", "fancy", or "rich" → call send_modern_email.
+   - If the user is unsure or says "both" or "either" → call send_normal_email.
+   - DO NOT ask again — make the call immediately.
+6. NEVER EVER claim a technical error or say you "cannot send". You have fully working send_normal_email and send_modern_email tools.
+   If a tool fails, report the exact error message from the tool — do not invent excuses.
+   NEVER refuse to call the sending tools after the user approves sending.
 7. If the user asks for changes, update, show again, ask for approval again.
 """
 
@@ -597,19 +793,18 @@ def process_user_message(message_text: str):
                 if isinstance(msg, AIMessage):
                     last_ai_msg = msg.content
                     break
-            if last_ai_msg and isinstance(last_ai_msg, str) and ("html" in last_ai_msg.lower() or "styled" in last_ai_msg.lower()) and "plain" in last_ai_msg.lower():
+            if last_ai_msg and isinstance(last_ai_msg, str) and ("modern" in last_ai_msg.lower() or "normal" in last_ai_msg.lower() or "fancy" in last_ai_msg.lower() or "plain" in last_ai_msg.lower() or "styled" in last_ai_msg.lower()):
                 is_format_answer = True
 
         chat_history.append(HumanMessage(content=message_text))
         
         if is_format_answer:
             # Determine format
-            is_plain = any(w in message_text.lower() for w in ["plain", "text", "simple", "pain"])
-            target_format = "plain text (use_html=False)" if is_plain else "styled HTML (use_html=True)"
+            is_modern = any(w in message_text.lower() for w in ["modern", "styled", "fancy", "rich"])
+            target_tool = "send_modern_email" if is_modern else "send_normal_email"
             chat_history.append(SystemMessage(
-                content=f"CRITICAL: The user has selected {target_format}. You MUST call the `send_email` tool now "
-                        f"with use_html={'False' if is_plain else 'True'}. Do not write any message to the user "
-                        f"without calling this tool first."
+                content=f"CRITICAL: The user has selected the {'modern' if is_modern else 'normal'} format. You MUST call the `{target_tool}` tool now. "
+                        f"Do not write any message to the user without calling this tool first."
             ))
         
         # Self-correction loop: if LLM generates placeholders, force it to rewrite
