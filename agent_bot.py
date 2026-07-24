@@ -368,6 +368,15 @@ chat_history: list[SystemMessage | HumanMessage | AIMessage] = [SystemMessage(co
 # ================== MAIN APP LOGIC ==================
 def process_user_message(message_text: str):
     print(f"\n[Telegram] Processing message: {message_text}")
+
+    # --- Memory clear command ---
+    if message_text.strip().lower() in ("/clear", "clear memory", "reset memory", "/reset"):
+        chat_history.clear()
+        chat_history.append(SystemMessage(content=SYSTEM_PROMPT))
+        send_telegram_message("🧹 Memory cleared! I've forgotten our previous conversation. Starting fresh.")
+        print("[Agent] Memory cleared by user.")
+        return
+
     try:
         chat_history.append(HumanMessage(content=message_text))
         result = agent_executor.invoke({"messages": chat_history})
@@ -384,6 +393,7 @@ def process_user_message(message_text: str):
         
     print(f"[Agent] Replied: {response}")
     send_telegram_message(response)
+
 
 
 def poll_telegram():
