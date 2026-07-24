@@ -410,6 +410,7 @@ Use the `web_search` tool to find fresh, specific information:
 - Run 2-3 searches on the recipient's industry/domain (e.g. "dental clinic automation challenges 2025", "best WhatsApp chatbot for healthcare 2025")
 - Search for what makes great proposals in this niche RIGHT NOW
 - Look for pain points, trends, statistics, and buzzwords that are current — not from 2 years ago
+- If a search returns no results, try DIFFERENT keywords — never give up after one failed search.
 The goal: your email should mention things they haven't heard a hundred times before.
 
 STEP 3 — DRAFT (specific, not generic)
@@ -443,8 +444,15 @@ After it returns, reply: "🧹 Memory cleared! Starting fresh."
 2. ALWAYS ask clarifying questions if context is insufficient — never guess and write generic.
 3. ALWAYS use web_search before drafting proposals. Generic emails get ignored.
 4. After drafting, ask: "Should I send this?" — wait for approval.
-5. Once approved, ask: "HTML (styled) or plain text?" then call `send_email`.
-6. NEVER claim a technical error. You have working tools — use them.
+5. Once approved, ask: "HTML (styled) or plain text?"
+   - User says "html", "styled", "fancy", "rich" → call send_email with use_html=True
+   - User says "plain", "text", "simple" → call send_email with use_html=False
+   - User says "both", "either", "any", or is unsure → call send_email with use_html=True
+     (HTML mode already sends BOTH an HTML version AND a plain-text fallback inside the same email)
+   - DO NOT ask again — pick use_html=True if in any doubt and call send_email immediately.
+6. NEVER EVER claim a technical error or say you "cannot send". You have a fully working send_email tool.
+   If send_email fails, report the exact error message from the tool — do not invent excuses.
+   NEVER refuse to call send_email after the user approves sending.
 7. If the user asks for changes, update, show again, ask for approval again.
 """
 
