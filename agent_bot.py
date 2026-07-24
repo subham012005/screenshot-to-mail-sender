@@ -276,8 +276,21 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
             )
             
             if not has_list_item:
-                # Normal paragraph: keep consecutive lines joined by <br> (essential for signatures/addresses)
-                paragraph_content = "<br>".join(lines)
+                # Differentiate between normal text paragraph (wants spaces) and signature/greeting/address (wants <br>)
+                avg_line_len = sum(len(l) for l in lines) / len(lines)
+                ends_with_punctuation = sum(1 for l in lines if l.rstrip() and l.rstrip()[-1] in ('.', '?', '!'))
+                
+                is_signature_or_short = (
+                    block == blocks[-1] or
+                    avg_line_len < 45 or
+                    (ends_with_punctuation / len(lines)) < 0.5
+                )
+                
+                if is_signature_or_short:
+                    paragraph_content = "<br>".join(lines)
+                else:
+                    paragraph_content = " ".join(lines)
+                    
                 html_blocks.append(f"<p style='margin-top: 0; margin-bottom: 16px; line-height: 1.8;'>{paragraph_content}</p>")
             else:
                 # Block has list items: convert items to standard <li> inside <ul>/<ol>
@@ -505,13 +518,16 @@ Use the `web_search` tool to find fresh, specific information:
 - If a search returns no results, try DIFFERENT keywords — never give up after one failed search.
 The goal: your email should mention things they haven't heard a hundred times before.
 
-STEP 3 — DRAFT (specific, not generic)
+STEP 3 — DRAFT (must sound like a real human, NOT an AI)
 Using your research + user context + resume below, draft the email:
-- Open with something specific to THEIR situation (use a stat, trend, or pain point you just researched)
-- Show you understand their world before pitching anything
-- Make the value proposition concrete: "X result in Y timeframe" not "I can help you grow"
-- Keep it under 250 words — busy people don't read walls of text
-- Close with one clear, low-friction CTA
+- NEVER use standard AI cliches like "I hope this email finds you well", "I hope you are doing well", "My name is Subham Sharma and...", or "I am reaching out to...".
+- Open directly with a specific observation, hook, or casual greeting: e.g. "Hi [Name] -", "Hello [Name] -", or simply start with the point.
+- Write in a direct, casual-professional, conversational tone. Write like a colleague or fellow business owner sending a quick, helpful note, not like a sales bot or corporate marketer.
+- DO NOT use formal list structures with bolded bullet headers (e.g. "- **Feature Name:** Description"). Bulleted lists with bold titles scream "AI generated". Instead, use short, natural flowing sentences to describe features, or simple un-bolded bullet points if needed.
+- Write each paragraph as a single continuous line (do NOT wrap lines or insert newlines at 70 characters). Only use single newlines for the signature block.
+- Keep the entire email under 150 words. Be concise and high-impact.
+- Close with a low-friction, natural question (e.g. "Worth a quick chat?", "Are you open to this?", "Let me know if you'd like to see a demo").
+
 
 === WHEN THE USER SENDS IMAGES ===
 Use the `draft_email_from_images` tool first to extract context from the image.
@@ -563,9 +579,39 @@ def process_user_message(message_text: str):
     response = ""
     try:
         chat_history.append(HumanMessage(content=message_text))
-        result = agent_executor.invoke({"messages": chat_history})
-        final_messages = result["messages"]
-        response = str(final_messages[-1].content)
+        
+        # Self-correction loop: if LLM generates placeholders, force it to rewrite
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            result = agent_executor.invoke({"messages": chat_history})
+            final_messages = result["messages"]
+            response = str(final_messages[-1].content)
+            
+            # Remove Markdown links like [LinkedIn](url) before checking for bracket placeholders
+            cleaned_text = re.sub(r"\[.*?\]\(.*?\)", "", response)
+            
+            # Check if there are any remaining square brackets (placeholders like [Recipient Name])
+            if "[" in cleaned_text or "]" in cleaned_text:
+                print(f"[Warning] Placeholder detected (attempt {attempt + 1}/{max_attempts}): {response}")
+                if attempt < max_attempts - 1:
+                    # Append error feedback directly to chat history so the agent sees its mistake
+                    chat_history.append(AIMessage(content=response))
+                    chat_history.append(HumanMessage(
+                        content="ERROR: The email draft contains bracketed placeholder text (e.g. '[Recipient's Name]' or similar). "
+                                "Under our critical rules, placeholders are strictly forbidden. Please rewrite the email draft "
+                                "immediately, replacing all bracketed placeholders with generic phrases or real details. "
+                                "Return ONLY the finalized email draft."
+                    ))
+                else:
+                    # If we exhausted retries, programmatically strip the brackets to safeguard the draft
+                    print("[Warning] Retries exhausted. Programmatically sanitizing placeholders.")
+                    response = response.replace("[Recipient's Name]", "there")
+                    response = response.replace("[Recipient Name]", "there")
+                    response = response.replace("[Company Name]", "your company")
+                    response = response.replace("[Company]", "your company")
+                    response = re.sub(r"\[.*?\]", "there", response) # fallback strip
+            else:
+                break
 
         # If agent called clear_memory, history is already wiped inside the tool.
         # Just ensure the system prompt is still present and send a clean reply.
@@ -585,6 +631,7 @@ def process_user_message(message_text: str):
 
     print(f"[Agent] Replied: {response}")
     send_telegram_message(response)
+
 
 
 
