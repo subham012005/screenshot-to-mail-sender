@@ -200,47 +200,41 @@ def send_email(to: str, subject: str, body: str, cc: Optional[str] = None, bcc: 
     except Exception as e:
         return f"Error loading Gmail credentials: {str(e)}"
 
-    # --- Normalize body: collapse hard mid-sentence line breaks into spaces while preserving list structures ---
-    paragraphs = body.split("\n\n")
+    # --- Normalize body: collapse hard mid-sentence line breaks into spaces while preserving list and signature structures ---
+    def _normalize_para(p_text: str, is_l: bool) -> str:
+        lines = [line.strip() for line in p_text.splitlines() if line.strip()]
+        if not lines:
+            return ""
+            
+        # Check if contains list items
+        has_list = any(
+            l.startswith("-") or 
+            l.startswith("*") or 
+            l.startswith("•") or 
+            (l and l[0].isdigit() and "." in l.split()[0])
+            for l in lines
+        )
+        if has_list:
+            return "\n".join(lines)
+            
+        # Check if signature or contact info block
+        avg_len = sum(len(l) for l in lines) / len(lines)
+        is_cnt = any(
+            "@" in l or 
+            "http" in l or 
+            any(c.isdigit() for c in l) and len(l) < 25 
+            for l in lines
+        )
+        if is_l or avg_len < 45 or (is_cnt and len(lines) > 1):
+            return "\n".join(lines)
+        else:
+            return " ".join(lines)
+
+    raw_paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
     normalized_paragraphs = []
-    
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-            
-        lines = para.splitlines()
-        normalized_lines = []
-        current_line = ""
-        
-        for line in lines:
-            line_str = line.strip()
-            if not line_str:
-                continue
-                
-            # Check if line is a list item
-            is_list_item = (
-                line_str.startswith("-") or 
-                line_str.startswith("*") or 
-                line_str.startswith("•") or 
-                (line_str and line_str[0].isdigit() and "." in line_str.split()[0])
-            )
-            
-            if is_list_item:
-                if current_line:
-                    normalized_lines.append(current_line)
-                    current_line = ""
-                normalized_lines.append(line_str)
-            else:
-                if current_line:
-                    current_line += " " + line_str
-                else:
-                    current_line = line_str
-                    
-        if current_line:
-            normalized_lines.append(current_line)
-            
-        normalized_paragraphs.append("\n".join(normalized_lines))
+    for idx, para in enumerate(raw_paragraphs):
+        is_last_para = (idx == len(raw_paragraphs) - 1)
+        normalized_paragraphs.append(_normalize_para(para, is_last_para))
         
     body = "\n\n".join(normalized_paragraphs)
 
