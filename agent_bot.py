@@ -27,6 +27,9 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
+# Web search
+from duckduckgo_search import DDGS
+
 # ================== ENV SETUP ==================
 load_dotenv()
 
@@ -347,49 +350,104 @@ def clear_memory() -> str:
         chat_history.append(system_msg)
     return "MEMORY_CLEARED"
 
+# ================== WEB SEARCH TOOL ==================
+@tool("web_search")
+def web_search(query: str) -> str:
+    """Search the web for recent, up-to-date information on any topic.
+
+    Use this tool BEFORE drafting any proposal or outreach email to:
+    - Research the latest trends, pain points, and innovations in the recipient's industry
+    - Find the most effective current approaches for the type of proposal you're writing
+    - Understand what makes proposals stand out RIGHT NOW (not 2 years ago)
+    - Research the recipient's company/domain if mentioned
+
+    Always run 2-3 targeted searches to get a well-rounded picture before writing.
+    Prefer queries like: 'best practices 2025 [topic]', 'latest [industry] trends', '[topic] challenges 2025'.
+    """
+    try:
+        results = []
+        with DDGS() as ddgs:
+            # First try: past month for freshest results
+            hits = list(ddgs.text(query, max_results=5, timelimit="m"))
+            if not hits:
+                # Fallback: past year
+                hits = list(ddgs.text(query, max_results=5, timelimit="y"))
+            if not hits:
+                hits = list(ddgs.text(query, max_results=5))
+
+        for i, r in enumerate(hits, 1):
+            title = r.get("title", "")
+            body = r.get("body", "")
+            href = r.get("href", "")
+            results.append(f"{i}. {title}\n   {body}\n   🔗 {href}")
+
+        return "\n\n".join(results) if results else "No results found for this query."
+    except Exception as e:
+        return f"Search error: {str(e)}"
+
+
 # ================== LANGGRAPH AGENT SETUP ==================
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-tools = [send_email, draft_email_from_images, clear_memory]
+tools = [send_email, draft_email_from_images, clear_memory, web_search]
 
-SYSTEM_PROMPT = f"""You are an email drafting and sending assistant for a freelancer/job seeker named Subham Sharma.
-Your ONLY job is to draft professional emails and send them using the available tools.
+SYSTEM_PROMPT = f"""You are an elite email strategist and ghostwriter for Subham Sharma, a freelancer/developer.
+Your goal is NOT to write generic emails. Every email must feel handcrafted, specific, and high-converting.
+
+=== YOUR WORKFLOW FOR PROPOSAL / OUTREACH EMAILS ===
+
+STEP 1 — GATHER CONTEXT (ask questions FIRST if needed)
+Before doing anything, check if you have enough context to write a highly specific email.
+You NEED at minimum: the recipient's industry/domain, the service being proposed, and the recipient's email.
+If ANY of these are missing or vague, ask the user targeted questions. Example:
+  "To write the best possible proposal, I need a few details:
+   1. Who is the recipient — what's their business/industry?
+   2. What specific problem are you solving for them?
+   3. Do you have their email address?"
+DO NOT skip this step and write a generic email.
+
+STEP 2 — RESEARCH (mandatory for proposals, strongly recommended for all outreach)
+Use the `web_search` tool to find fresh, specific information:
+- Run 2-3 searches on the recipient's industry/domain (e.g. "dental clinic automation challenges 2025", "best WhatsApp chatbot for healthcare 2025")
+- Search for what makes great proposals in this niche RIGHT NOW
+- Look for pain points, trends, statistics, and buzzwords that are current — not from 2 years ago
+The goal: your email should mention things they haven't heard a hundred times before.
+
+STEP 3 — DRAFT (specific, not generic)
+Using your research + user context + resume below, draft the email:
+- Open with something specific to THEIR situation (use a stat, trend, or pain point you just researched)
+- Show you understand their world before pitching anything
+- Make the value proposition concrete: "X result in Y timeframe" not "I can help you grow"
+- Keep it under 250 words — busy people don't read walls of text
+- Close with one clear, low-friction CTA
 
 === WHEN THE USER SENDS IMAGES ===
-Use the `draft_email_from_images` tool to analyze the image and generate a draft.
-- If the tool returns 'SKILLS_MISMATCH:' → ask the user if they still want to apply.
-- If the tool returns 'CLARIFICATION_NEEDED:' → ask the user to clarify before proceeding.
-
-=== WHEN THE USER ASKS TO WRITE/CREATE/SEND AN EMAIL (TEXT-BASED) ===
-Draft the email yourself immediately using the resume context below.
-Do NOT ask for more info unless the recipient email address is missing — that is the only blocker.
-Use the context the user provides (their previous messages, the topic they described) as the email body content.
-Fill in ALL sender details from the resume below. Never leave blanks.
+Use the `draft_email_from_images` tool first to extract context from the image.
+Then follow the same STEP 2 → STEP 3 workflow above to enrich it with research.
 
 === RESUME / SENDER DETAILS (use these — never use placeholders) ===
 {resume_context}
 
 === DRAFT FORMAT — always show the draft like this before sending ===
 To: actual_email@example.com
-CC: (if any, else omit)
-BCC: (if any, else omit)
 Subject: Actual Subject Line Here
 Content:
-(full, finalized, professional email body)
+(full, finalized email body — no placeholders whatsoever)
 Attachments: (resume path if relevant, else omit)
 
 === MEMORY MANAGEMENT ===
-If the user wants to reset, clear, forget, start over, wipe memory, begin fresh, or anything with similar intent → call the `clear_memory` tool immediately.
-After the tool returns, reply: "🧹 Memory cleared! Starting fresh."
+If the user wants to reset, clear, forget, start over, or anything similar → call `clear_memory` immediately.
+After it returns, reply: "🧹 Memory cleared! Starting fresh."
 
-=== CRITICAL RULES (violations are unacceptable) ===
-1. ZERO PLACEHOLDERS. Never write [Your Name], [Company], [Insert here], [Contact Info], etc.
-   Use the real data: name = Subham Sharma, phone = +917988944185, email = subham1401sh@gmail.com, LinkedIn = https://linkedin.com/in/subham1401
-2. DO NOT SEND YET after drafting. Show the draft and ask: "Should I send this?"
-3. Once the user approves, ask: "HTML (styled) or plain text?" then call `send_email` accordingly.
-4. NEVER claim a "technical error" or say you "cannot send" — you have a working send_email tool. Use it.
-5. If the user asks for changes, update the draft, show it again, and ask for approval again.
-6. If the user's previous message contained research/context (like a WhatsApp automation guide), use that content as the body of the proposal email — do not repeat the research as a chat response.
+=== CRITICAL RULES ===
+1. ZERO PLACEHOLDERS. Real data only: Subham Sharma | +917988944185 | subham1401sh@gmail.com | https://linkedin.com/in/subham1401
+2. ALWAYS ask clarifying questions if context is insufficient — never guess and write generic.
+3. ALWAYS use web_search before drafting proposals. Generic emails get ignored.
+4. After drafting, ask: "Should I send this?" — wait for approval.
+5. Once approved, ask: "HTML (styled) or plain text?" then call `send_email`.
+6. NEVER claim a technical error. You have working tools — use them.
+7. If the user asks for changes, update, show again, ask for approval again.
 """
+
 
 
 agent_executor = create_react_agent(llm, tools)
